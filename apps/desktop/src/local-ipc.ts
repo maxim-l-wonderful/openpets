@@ -7,11 +7,12 @@ import { applyAgentPetReaction, applyAgentPetSay, clearAgentPetLeaseState, repos
 import { classifyAnalyticsError, trackDesktopEvent, trackDesktopIntegrationActivity } from "./analytics.js";
 import { getAppStateSnapshot, recordOpenPetsActivity } from "./app-state.js";
 import { builtInPet } from "./built-in-pet.js";
-import { applyExternalPetReaction, applyExternalPetSay, getDefaultPetPaused, isDefaultPetVisible } from "./default-pet-controller.js";
+import { applyExternalPetReaction, applyExternalPetSay, getDefaultPetPaused, isDefaultPetVisible, removeDefaultPetSession, upsertDefaultPetSession } from "./default-pet-controller.js";
 import { createStaleLeaseStatus, LeaseManager } from "./lease-manager.js";
+import { reactionToSessionStatus, type SessionPatch } from "./session-store.js";
 import { debug, error as logError, info } from "./logger.js";
 import { cleanupUnixSocket, getDiscoveryFilePath, getIpcEndpointConfig, parseIpcEndpoint, protectUnixSocket, removeDiscoveryFile, writeDiscoveryFile, type IpcEndpoint, type IpcEndpointConfig, type OpenPetsDiscoveryFile } from "./local-ipc-paths.js";
-import { errorResponse, IpcProtocolError, isRecord, maxIpcMessageBytes, okResponse, parseIpcRequest, validateInstallPetId, validateOptionalLeaseId, validateReaction, validateRequestedPetId, validateSayMessage, validateSessionNonce, type OpenPetsIpcRequest } from "./local-ipc-protocol.js";
+import { errorResponse, IpcProtocolError, isRecord, maxIpcMessageBytes, okResponse, parseIpcRequest, validateInstallPetId, validateOptionalLeaseId, validateReaction, validateRequestedPetId, validateSayMessage, validateSessionName, validateSessionNonce, validateSessionStatus, validateSessionText, type OpenPetsIpcRequest } from "./local-ipc-protocol.js";
 import { installPet } from "./pet-installation.js";
 import { clearConfinementState, setConfinementState } from "./confinement-manager.js";
 import { isConfinementSupported } from "./capabilities.js";
@@ -384,6 +385,8 @@ async function handleRequest(request: OpenPetsIpcRequest): Promise<unknown> {
     const params = isRecord(request.params) ? request.params : {};
     const leaseId = validateRequiredLeaseId(params.leaseId);
     debug("ipc", "lease release requested", { requestId: request.id, leaseId });
+    // Drop the session card (no-op for explicit/agent leases that never had one).
+    removeDefaultPetSession(leaseId);
     // Clean up confinement subscription for this lease if one exists.
     const rawLease = leaseManager.getRawLease(leaseId);
     if (rawLease?.targetKind === "explicit") {
@@ -405,9 +408,32 @@ async function handleRequest(request: OpenPetsIpcRequest): Promise<unknown> {
       return { ok: true, reaction, shown: applied.shown, reason: applied.reason, leaseId: lease.leaseId };
     }
     const applied = applyExternalPetReaction(reaction);
+    if (lease?.leaseId) {
+      const status = reactionToSessionStatus(reaction);
+      if (status) upsertDefaultPetSession(lease.leaseId, { status });
+    }
     safeRecordOpenPetsActivity({ kind: "react", reaction, petId, surface: "default" });
     trackDesktopIntegrationActivity("react", { integration_type: "ipc", target_kind: lease?.targetKind ?? "default", shown: applied.shown, reason: applied.reason });
     return { ok: true, reaction, shown: applied.shown, reason: applied.reason };
+  }
+
+  if (request.method === "session.update") {
+    const params = isRecord(request.params) ? request.params : {};
+    const patch: SessionPatch = {
+      name: validateSessionName(params.name),
+      status: validateSessionStatus(params.status),
+      message: validateSessionText(params.message, "Message", 120),
+      question: validateSessionText(params.question, "Question", 160),
+    };
+    const lease = getLeaseTarget(params.leaseId);
+    debug("ipc", "session update requested", { requestId: request.id, leaseId: lease?.leaseId, targetKind: lease?.targetKind, status: patch.status, hasName: Boolean(patch.name), hasMessage: Boolean(patch.message), hasQuestion: Boolean(patch.question) });
+    // The board lives on the default pet; explicit (agent) pets have their own bubble.
+    if (!lease?.leaseId || lease.targetKind === "explicit") {
+      return { ok: true, shown: false, reason: lease?.targetKind === "explicit" ? "explicit-pet" : "no-lease" };
+    }
+    upsertDefaultPetSession(lease.leaseId, patch);
+    trackDesktopIntegrationActivity("say", { integration_type: "ipc", target_kind: "default", shown: true, reason: undefined, has_reaction: false });
+    return { ok: true, shown: true, leaseId: lease.leaseId };
   }
 
   const params = isRecord(request.params) ? request.params : {};
@@ -423,6 +449,9 @@ async function handleRequest(request: OpenPetsIpcRequest): Promise<unknown> {
     return { ok: true, shown: applied.shown, reason: applied.reason, reaction, leaseId: lease.leaseId };
   }
   const applied = applyExternalPetSay(message, reaction);
+  if (lease?.leaseId) {
+    upsertDefaultPetSession(lease.leaseId, { message, status: reactionToSessionStatus(reaction) });
+  }
   safeRecordOpenPetsActivity({ kind: "say", reaction, petId, surface: "default" });
   trackDesktopIntegrationActivity("say", { integration_type: "ipc", target_kind: lease?.targetKind ?? "default", shown: applied.shown, reason: applied.reason, has_reaction: Boolean(reaction) });
   return { ok: true, shown: applied.shown, reason: applied.reason, reaction };
@@ -464,6 +493,8 @@ function handleLastExplicitLease(petId: string): void {
 
 function cleanupReleasedLeases(leases: readonly { readonly leaseId: string; readonly targetKind: string }[]): void {
   for (const lease of leases) {
+    // Default-pet sessions own a board card; remove it when the lease ends.
+    removeDefaultPetSession(lease.leaseId);
     if (lease.targetKind === "explicit") unsubscribeConfinement(lease.leaseId);
   }
 }

@@ -1,8 +1,37 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { allowedReactions, createOpenPetsClient, OpenPetsClientError, type OpenPetsClient, type OpenPetsLeaseResult, type OpenPetsReaction, type OpenPetsStatusResult } from "@open-pets/client";
+import { allowedReactions, createOpenPetsClient, sessionStatuses, OpenPetsClientError, type OpenPetsClient, type OpenPetsLeaseResult, type OpenPetsReaction, type OpenPetsStatusResult } from "@open-pets/client";
 import { z } from "zod";
 
 export const reactionSchema = z.enum(allowedReactions);
+export const sessionStatusSchema = z.enum(sessionStatuses);
+
+const noUrlOrPath = (value: string) => !/https?:\/\/|www\.|\/[\w.-]+\/[\w./-]+|[A-Za-z]:\\/.test(value);
+const noSecret = (value: string) => !/(api[_-]?key|secret|token|password|passwd|BEGIN [A-Z ]+PRIVATE KEY)/i.test(value);
+
+const sessionNameSchema = z.string().trim().min(1).max(48)
+  .refine((value) => !/[\r\n]/.test(value), "Name must be single-line.")
+  .refine(noUrlOrPath, "Name contains URL or path-like content.");
+
+const sessionMessageSchema = z.string().trim().min(1).max(120)
+  .refine((value) => !/[\r\n]/.test(value), "Message must be single-line.")
+  .refine((value) => !/```|<script|function\s+\w+|=>|\b(class|import|export|const|let|var)\b/.test(value), "Message looks like code.")
+  .refine(noUrlOrPath, "Message contains URL or path-like content.")
+  .refine(noSecret, "Message looks secret-like.");
+
+const sessionQuestionSchema = z.string().trim().min(1).max(160)
+  .refine((value) => !/[\r\n]/.test(value), "Question must be single-line.")
+  .refine(noUrlOrPath, "Question contains URL or path-like content.")
+  .refine(noSecret, "Question looks secret-like.");
+
+export const sessionInputShape = {
+  name: sessionNameSchema.optional(),
+  status: sessionStatusSchema.optional(),
+  message: sessionMessageSchema.optional(),
+  question: sessionQuestionSchema.optional(),
+};
+
+export const sessionSchema = z.object(sessionInputShape)
+  .refine((value) => value.name !== undefined || value.status !== undefined || value.message !== undefined || value.question !== undefined, "Provide at least one of name, status, message, or question.");
 
 export const saySchema = z.object({
   message: z.string().trim().min(1).max(140)
@@ -137,6 +166,24 @@ export async function handleSay(input: unknown, context: ToolContext): Promise<C
     const result = await client.say(parsed.data.message, { reaction: parsed.data.reaction, leaseId: context.lease!.lease!.leaseId });
     return {
       content: [{ type: "text", text: "OpenPets message sent." }],
+      structuredContent: { ok: true, result },
+    };
+  } catch (error) {
+    return toolError(`OpenPets desktop app is not running or local IPC is unavailable. ${sanitizeError(error)}`);
+  }
+}
+
+export async function handleSession(input: unknown, context: ToolContext): Promise<CallToolResult> {
+  await context.leaseReady;
+  const parsed = sessionSchema.safeParse(input);
+  if (!parsed.success) return toolError("Invalid session update. Provide at least one of name, status, message, or question; keep text short, single-line, and free of code, secrets, URLs, and file paths.");
+  if (!(await ensureLease(context))) return toolError(`OpenPets lease is unavailable. ${sanitizeUnavailableReason(context.lease?.degradedReason) ?? "Open OpenPets and try again."}`);
+
+  try {
+    const client = context.client ?? createOpenPetsClient();
+    const result = await client.updateSession(parsed.data, { leaseId: context.lease!.lease!.leaseId });
+    return {
+      content: [{ type: "text", text: "OpenPets session updated." }],
       structuredContent: { ok: true, result },
     };
   } catch (error) {

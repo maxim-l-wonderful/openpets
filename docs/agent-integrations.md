@@ -99,8 +99,9 @@ are what the Control Center Integrations page and the CLI call.
 ## MCP server — `@open-pets/mcp`
 
 A standalone stdio MCP server (`open-pets-mcp`) for any MCP-capable agent. It
-registers exactly three tools — `openpets_status`, `openpets_react`,
-`openpets_say` — with Zod-validated input and read-only/idempotent annotations.
+registers four tools — `openpets_status`, `openpets_react`, `openpets_say`,
+and `openpets_session` (the multi-session board) — with Zod-validated input and
+read-only/idempotent annotations.
 On startup it acquires a lease, heartbeats every ~5s, and releases on
 SIGINT/SIGTERM. Errors are sanitized so IPC paths/tokens/sockets never leak into
 tool output. It is spawned by the CLI (`runMcp()`) which forwards stdio and

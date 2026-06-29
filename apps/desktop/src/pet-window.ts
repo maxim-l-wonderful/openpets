@@ -9,12 +9,13 @@ import { clampToNearestDisplayIfOffscreen, clampToVisibleWorkArea, defaultPetWin
 import { builtInPet } from "./built-in-pet.js";
 import { getInstalledPetDir } from "./pet-paths.js";
 import { getActiveLocale, getActiveLocaleLang, t } from "./i18n/index.js";
-import type { OpenPetsReaction } from "./local-ipc-protocol.js";
+import type { OpenPetsReaction, OpenPetsSessionStatus } from "./local-ipc-protocol.js";
 import { pickReactionMessage } from "./reaction-messages.js";
 import { debug, error as logError, info, warn } from "./logger.js";
 import { executeDefaultPetPluginCommand, executeDefaultPetPluginMenuSelect, getDefaultPetPluginCommands, getDefaultPetPluginMenuItems } from "./plugin-service.js";
 import type { ActiveBubble } from "./plugin-bubble-arbiter.js";
 import type { PluginBubbleIndicator, PluginCommandForm, PluginBubbleHud, PluginBubbleHudItem } from "./plugin-sdk-bridge.js";
+import type { SessionCard } from "./session-store.js";
 import { defaultPetSprite, motionToSpriteState, resolveReactionSpriteState, type PetMotionState, type UniversalSpriteState } from "./reaction-animation-mapping.js";
 import { isFocusActionAvailable } from "./capabilities.js";
 import { computeEffectiveWaylandBackend } from "./wayland-backend.js";
@@ -32,6 +33,7 @@ export interface DefaultPetWindowOptions extends PetWindowInteractionHooks {
   readonly display: PetTransientDisplay | null;
   readonly badge: PetStatusBadgeReaction | null;
   readonly pluginBubbles?: PetPluginBubbles | null;
+  readonly sessionBoard?: readonly SessionCard[] | null;
   readonly onPositionChanged: (position: Point) => void;
   readonly onHideRequested: () => void;
 }
@@ -144,7 +146,7 @@ export function createDefaultPetWindow(options: DefaultPetWindowOptions, dismiss
     options.onPositionChanged(readWindowPosition(window));
   });
 
-  void loadDefaultPetContent(window, options.paused, options.display, options.badge, dismissToken, options.pluginBubbles ?? null);
+  void loadDefaultPetContent(window, options.paused, options.display, options.badge, dismissToken, options.pluginBubbles ?? null, options.sessionBoard ?? null);
 
   return window;
 }
@@ -671,11 +673,12 @@ function applyPetAlwaysOnTop(window: BrowserWindow): void {
   }
 }
 
-export async function loadDefaultPetContent(window: BrowserWindow, paused: boolean, display: PetTransientDisplay | null = null, badge: PetStatusBadgeReaction | null = null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null): Promise<void> {
+export async function loadDefaultPetContent(window: BrowserWindow, paused: boolean, display: PetTransientDisplay | null = null, badge: PetStatusBadgeReaction | null = null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, sessionBoard: readonly SessionCard[] | null = null): Promise<void> {
   const sequence = allocateWindowLoadSequence(window);
-  debug("pet.window", "default content render begin", { windowId: window.id, sequence, paused, hasDisplay: Boolean(display), reaction: display?.reaction, hasMessage: Boolean(display?.message), badge, hasPluginBubble: Boolean(pluginBubbles?.transient), hasPinned: Boolean(pluginBubbles?.pinned), defaultPetId: getAppStateSnapshot().preferences.defaultPetId });
-  const render = await createDefaultPetRender(paused, display, badge, dismissToken, pluginBubbles);
-  applyLinuxPetWindowShape(window, getAppStateSnapshot().preferences.petScale as PetScaleValue, Boolean(display?.message || display?.reactionMessage || display?.reaction || badge || paused || pluginBubbles?.transient || pluginBubbles?.pinned));
+  const hasBoard = Boolean(sessionBoard && sessionBoard.length > 0);
+  debug("pet.window", "default content render begin", { windowId: window.id, sequence, paused, hasDisplay: Boolean(display), reaction: display?.reaction, hasMessage: Boolean(display?.message), badge, hasPluginBubble: Boolean(pluginBubbles?.transient), hasPinned: Boolean(pluginBubbles?.pinned), sessions: sessionBoard?.length ?? 0, defaultPetId: getAppStateSnapshot().preferences.defaultPetId });
+  const render = await createDefaultPetRender(paused, display, badge, dismissToken, pluginBubbles, sessionBoard);
+  applyLinuxPetWindowShape(window, getAppStateSnapshot().preferences.petScale as PetScaleValue, Boolean(display?.message || display?.reactionMessage || display?.reaction || badge || paused || pluginBubbles?.transient || pluginBubbles?.pinned || hasBoard));
   if (tryUpdateLoadedPetContent(window, render, "default", sequence)) return;
   await loadPetHtmlFile(window, render.html, "default", sequence).then(() => {
     petWindowRenderCache.set(window, render.cacheKey);
@@ -836,15 +839,15 @@ function applyLinuxPetWindowShape(window: BrowserWindow, scale: PetScaleValue, h
   }
 }
 
-async function createDefaultPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null): Promise<PetContentRender> {
-  const installedPetRender = await tryCreateInstalledPetRender(paused, display, badge, dismissToken, pluginBubbles);
+async function createDefaultPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, sessionBoard: readonly SessionCard[] | null = null): Promise<PetContentRender> {
+  const installedPetRender = await tryCreateInstalledPetRender(paused, display, badge, dismissToken, pluginBubbles, sessionBoard);
   if (installedPetRender) {
     return installedPetRender;
   }
 
   const spriteUrl = pathToFileURL(join(app.getAppPath(), "assets", defaultPetSprite.fileName)).toString();
   const hasPinned = Boolean(pluginBubbles?.pinned);
-  const bodyHtml = createPetBodyMarkup("OpenPets default pet", createBubbleMarkup(display, paused, badge, dismissToken, pluginBubbles), `<div class="sprite" role="img" aria-label="Claude animated default pet"></div>`, createPinnedBubbleMarkup(pluginBubbles), hasPinned);
+  const bodyHtml = createPetBodyMarkup("OpenPets default pet", createBubbleMarkup(display, paused, badge, dismissToken, pluginBubbles, sessionBoard), `<div class="sprite" role="img" aria-label="Claude animated default pet"></div>`, createPinnedBubbleMarkup(pluginBubbles), hasPinned);
   const reactionState = getReactionSpriteState(display?.reaction);
   const stateRows = defaultPetSprite.states;
   const scale = getAppStateSnapshot().preferences.petScale as PetScaleValue;
@@ -892,7 +895,7 @@ async function createDefaultPetRender(paused: boolean, display: PetTransientDisp
   };
 }
 
-async function tryCreateInstalledPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null): Promise<PetContentRender | null> {
+async function tryCreateInstalledPetRender(paused: boolean, display: PetTransientDisplay | null, badge: PetStatusBadgeReaction | null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, sessionBoard: readonly SessionCard[] | null = null): Promise<PetContentRender | null> {
   const state = getAppStateSnapshot();
   const selected = state.pets.installed.find((pet) => pet.id === state.preferences.defaultPetId);
 
@@ -901,7 +904,7 @@ async function tryCreateInstalledPetRender(paused: boolean, display: PetTransien
   }
 
   try {
-    return await createInstalledPetRender(selected.id, selected.displayName, paused, display, state.preferences.petScale as PetScaleValue, badge, `default:${selected.id}`, dismissToken, pluginBubbles);
+    return await createInstalledPetRender(selected.id, selected.displayName, paused, display, state.preferences.petScale as PetScaleValue, badge, `default:${selected.id}`, dismissToken, pluginBubbles, sessionBoard);
   } catch (error) {
     console.error(`Failed to render installed default pet ${selected.id}; falling back to built-in pet.`, error);
     try {
@@ -913,7 +916,7 @@ async function tryCreateInstalledPetRender(paused: boolean, display: PetTransien
   }
 }
 
-async function createInstalledPetRender(petId: string, displayName: string, paused: boolean, display: PetTransientDisplay | null, scale: PetScaleValue, badge: PetStatusBadgeReaction | null, cachePrefix: string, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null): Promise<PetContentRender> {
+async function createInstalledPetRender(petId: string, displayName: string, paused: boolean, display: PetTransientDisplay | null, scale: PetScaleValue, badge: PetStatusBadgeReaction | null, cachePrefix: string, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, sessionBoard: readonly SessionCard[] | null = null): Promise<PetContentRender> {
   const spritesheetPath = join(getInstalledPetDir(petId), "spritesheet.webp");
   const spritesheet = await stat(spritesheetPath);
   if (!spritesheet.isFile() || spritesheet.size <= 0 || spritesheet.size > 100 * 1024 * 1024) {
@@ -922,7 +925,7 @@ async function createInstalledPetRender(petId: string, displayName: string, paus
 
   const imageUrl = pathToFileURL(spritesheetPath).toString();
   const hasPinned = Boolean(pluginBubbles?.pinned);
-  const bodyHtml = createPetBodyMarkup(escapeHtml(displayName), createBubbleMarkup(display, paused, badge, dismissToken, pluginBubbles), `<div class="installed-card" role="img" aria-label="${escapeHtml(displayName)}"><div class="installed-sprite"></div></div>`, createPinnedBubbleMarkup(pluginBubbles), hasPinned);
+  const bodyHtml = createPetBodyMarkup(escapeHtml(displayName), createBubbleMarkup(display, paused, badge, dismissToken, pluginBubbles, sessionBoard), `<div class="installed-card" role="img" aria-label="${escapeHtml(displayName)}"><div class="installed-sprite"></div></div>`, createPinnedBubbleMarkup(pluginBubbles), hasPinned);
   const reactionState = getReactionSpriteState(display?.reaction);
   const stateRows = defaultPetSprite.states;
 
@@ -1183,9 +1186,35 @@ function createPetWindowCss(paused: boolean, scale: PetScaleValue): string {
     .bubble-hud-item-fill.tone-pink { background: #db2777; }
     .bubble-hud-item-fill.tone-slate { background: #475569; }
     .bubble-hud-item-fill.tone-red { background: #dc2626; }
+    .session-board { position: absolute; left: 50%; bottom: ${bubbleBottom}px; z-index: 4; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; width: 216px; max-width: calc(100vw - 16px); pointer-events: none; animation: bubble-in 200ms cubic-bezier(0.2, 0, 0, 1); }
+    .stage.has-pinned .session-board { bottom: ${bubbleBottom + 28}px; }
+    .session-card { box-sizing: border-box; width: 100%; padding: 7px 9px 8px; border-radius: 12px; background: linear-gradient(135deg, rgba(239, 246, 255, 0.97), rgba(237, 233, 254, 0.96)); border: 1px solid rgba(255, 255, 255, 0.78); box-shadow: 0 10px 20px rgba(15, 23, 42, 0.14), 0 2px 4px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.82); backdrop-filter: ${bubbleBackdropFilter}; color: #172033; position: relative; overflow: hidden; }
+    .session-card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: #94a3b8; }
+    .session-card.is-running::before { background: #3b82f6; }
+    .session-card.is-waiting::before { background: #f59e0b; }
+    .session-card.is-done::before { background: #10b981; }
+    .session-card.is-error::before { background: #ef4444; }
+    .session-card.is-idle::before { background: #94a3b8; }
+    .session-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .session-dot { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 999px; background: #94a3b8; box-shadow: 0 0 0 2px rgba(148, 163, 184, 0.18); }
+    .session-card.is-running .session-dot { background: #3b82f6; box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.20); animation: session-pulse 1100ms ease-in-out infinite; }
+    .session-card.is-waiting .session-dot { background: #f59e0b; box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.22); animation: session-blink 900ms steps(2, end) infinite; }
+    .session-card.is-done .session-dot { background: #10b981; box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.20); }
+    .session-card.is-error .session-dot { background: #ef4444; box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.20); }
+    .session-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 780 11px/14px Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; letter-spacing: 0.01em; }
+    .session-status { flex: 0 0 auto; font: 800 8.5px/1 Inter, ui-sans-serif, system-ui, sans-serif; text-transform: uppercase; letter-spacing: 0.06em; padding: 2px 6px; border-radius: 999px; color: #475569; background: rgba(71, 85, 105, 0.12); }
+    .session-card.is-running .session-status { color: #1d4ed8; background: rgba(59, 130, 246, 0.14); }
+    .session-card.is-waiting .session-status { color: #b45309; background: rgba(245, 158, 11, 0.16); }
+    .session-card.is-done .session-status { color: #047857; background: rgba(16, 185, 129, 0.16); }
+    .session-card.is-error .session-status { color: #b91c1c; background: rgba(239, 68, 68, 0.16); }
+    .session-msg { margin-top: 4px; color: #334155; font: 600 10px/13px Inter, ui-sans-serif, system-ui, sans-serif; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: break-word; }
+    .session-q { margin-top: 5px; padding: 5px 7px; border-radius: 8px; background: rgba(245, 158, 11, 0.14); border: 1px solid rgba(245, 158, 11, 0.28); color: #92400e; font: 700 10px/13px Inter, ui-sans-serif, system-ui, sans-serif; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .session-more { text-align: center; color: #64748b; font: 700 9.5px/1 Inter, ui-sans-serif, system-ui, sans-serif; padding: 2px 0 1px; }
     @keyframes bubble-in { from { opacity: 0; transform: translateX(-50%) translateY(4px) scale(0.96); } to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); } }
     @keyframes status-pulse { 0%, 100% { opacity: 0.52; } 50% { opacity: 1; } }
-    @media (prefers-reduced-motion: reduce) { .sprite, .installed-sprite, .bubble, .bubble-status-icon::before { animation: none !important; } }
+    @keyframes session-pulse { 0%, 100% { box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.32); } 50% { box-shadow: 0 0 0 5px rgba(59, 130, 246, 0.04); } }
+    @keyframes session-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    @media (prefers-reduced-motion: reduce) { .sprite, .installed-sprite, .bubble, .bubble-status-icon::before, .session-dot, .session-board { animation: none !important; } }
   `;
 }
 
@@ -1322,7 +1351,8 @@ export function pluginBubblesCacheKey(pluginBubbles: PetPluginBubbles | null): s
   return `${pluginBubbles.transient?.token ?? "-"}:${pluginBubbles.pinned?.token ?? "-"}`;
 }
 
-function createBubbleMarkup(display: PetTransientDisplay | null, paused: boolean, badgeReaction: PetStatusBadgeReaction | null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null): string {
+function createBubbleMarkup(display: PetTransientDisplay | null, paused: boolean, badgeReaction: PetStatusBadgeReaction | null, dismissToken?: string, pluginBubbles: PetPluginBubbles | null = null, sessionBoard: readonly SessionCard[] | null = null): string {
+  if (!paused && sessionBoard && sessionBoard.length > 0) return createSessionBoardMarkup(sessionBoard);
   if (pluginBubbles?.transient) return createPluginBubbleMarkup(pluginBubbles.transient, false);
   const suppressReactionMessage = display?.suppressReactionMessage === true;
   const text = display?.message ?? display?.reactionMessage ?? (!suppressReactionMessage && display?.reaction ? pickReactionMessage(display.reaction, Math.random, getActiveLocale()) : undefined) ?? (paused ? t("pet.paused") : "");
@@ -1337,6 +1367,34 @@ function createBubbleMarkup(display: PetTransientDisplay | null, paused: boolean
   const token = dismissToken ?? display?.dismissToken;
   const dismissAttr = token ? ` data-dismiss-token="${escapeHtml(token)}"` : "";
   return `<div class="${className}" role="status" aria-live="polite"${dismissAttr}>${header}${divider}${body}</div>`;
+}
+
+/** Max session cards rendered before collapsing the rest into a "+N more" row. */
+const maxVisibleSessionCards = 4;
+
+const sessionStatusMeta: Record<OpenPetsSessionStatus, { readonly className: string; readonly label: string }> = {
+  in_progress: { className: "is-running", label: "running" },
+  waiting: { className: "is-waiting", label: "waiting" },
+  done: { className: "is-done", label: "done" },
+  error: { className: "is-error", label: "error" },
+  idle: { className: "is-idle", label: "idle" },
+};
+
+/** Stacked multi-session board: one card per active coding session on the default pet. */
+function createSessionBoardMarkup(sessions: readonly SessionCard[]): string {
+  const visible = sessions.slice(0, maxVisibleSessionCards);
+  const overflow = sessions.length - visible.length;
+  const cards = visible.map(createSessionCardMarkup).join("");
+  const more = overflow > 0 ? `<div class="session-more">+${overflow} more</div>` : "";
+  return `<div class="session-board" role="status" aria-live="polite">${cards}${more}</div>`;
+}
+
+function createSessionCardMarkup(card: SessionCard): string {
+  const meta = sessionStatusMeta[card.status] ?? sessionStatusMeta.idle;
+  const title = escapeHtml(card.name ?? `Session ${card.ordinal}`);
+  const message = card.message ? `<div class="session-msg">${escapeHtml(card.message)}</div>` : "";
+  const question = card.status === "waiting" && card.question ? `<div class="session-q">${escapeHtml(card.question)}</div>` : "";
+  return `<div class="session-card ${meta.className}"><div class="session-card-head"><span class="session-dot" aria-hidden="true"></span><span class="session-title">${title}</span><span class="session-status">${escapeHtml(meta.label)}</span></div>${message}${question}</div>`;
 }
 
 const statusBadgeIcons = {

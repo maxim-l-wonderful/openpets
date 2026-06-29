@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { handleReact, handleSay, handleStatus, reactSchema, saySchema, type ToolContext } from "./tools.js";
+import { handleReact, handleSay, handleSession, handleStatus, reactSchema, saySchema, sessionInputShape, type ToolContext } from "./tools.js";
 
 export function createOpenPetsMcpServer(context: ToolContext): McpServer {
   const server = new McpServer({ name: "open-pets", version: "0.0.0" }, {
@@ -27,6 +27,13 @@ export function createOpenPetsMcpServer(context: ToolContext): McpServer {
     inputSchema: saySchema,
     annotations: { readOnlyHint: false, idempotentHint: false },
   }, async (input) => handleSay(input, context));
+
+  server.registerTool("openpets_session", {
+    title: "OpenPets Session",
+    description: "Update this coding session's card on the OpenPets multi-session board: set a short session name (title), a status (in_progress, waiting, done, error, idle), the current activity message, and/or a question awaiting the user. Call when starting, switching state, finishing, or when you need input. Never send code, logs, secrets, URLs, or file paths.",
+    inputSchema: sessionInputShape,
+    annotations: { readOnlyHint: false, idempotentHint: false },
+  }, async (input) => handleSession(input, context));
 
   return server;
 }

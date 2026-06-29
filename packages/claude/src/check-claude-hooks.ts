@@ -46,6 +46,7 @@ const client = {
   releaseLease: async () => { throw new Error("unused"); },
   react: async (reaction: string, options?: { readonly leaseId?: string }) => { calls.push({ kind: "react", value: reaction, leaseId: options?.leaseId }); },
   say: async (message: string, options?: { readonly leaseId?: string }) => { calls.push({ kind: "say", value: message, leaseId: options?.leaseId }); },
+  updateSession: async () => ({ ok: true }),
 };
 const dir = mkdtempSync(join(tmpdir(), "openpets-hooks-"));
 try {

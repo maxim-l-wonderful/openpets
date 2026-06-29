@@ -14,7 +14,7 @@ Use this skill to help users onboard quickly and safely:
 - install pets from the public catalog
 - configure Claude Code, OpenCode, Cursor, Codex, or another MCP client
 - configure a project to use a specific pet
-- validate `openpets_status`, `openpets_react`, and `openpets_say`
+- validate `openpets_status`, `openpets_react`, `openpets_say`, and `openpets_session`
 - explain how OpenPets works
 - troubleshoot setup problems
 

@@ -2,10 +2,10 @@ import net from "node:net";
 import { randomUUID } from "node:crypto";
 
 import { parseIpcEndpoint, readDiscoveryFile, type OpenPetsDiscoveryFile } from "./discovery.js";
-import { connectTimeoutMs, maxIpcMessageBytes, openPetsIpcVersion, parseIpcResponse, responseTimeoutMs, validateReaction, OpenPetsClientError, type OpenPetsIpcMethod, type OpenPetsIpcRequest, type OpenPetsReaction } from "./protocol.js";
+import { connectTimeoutMs, maxIpcMessageBytes, openPetsIpcVersion, parseIpcResponse, responseTimeoutMs, validateReaction, OpenPetsClientError, type OpenPetsIpcMethod, type OpenPetsIpcRequest, type OpenPetsReaction, type OpenPetsSessionUpdate } from "./protocol.js";
 
 export { getDiscoveryFilePath, parseIpcEndpoint, readDiscoveryFile, validateDiscovery, validateEndpoint, type OpenPetsDiscoveryFile, type ParsedIpcEndpoint } from "./discovery.js";
-export { allowedReactions, OpenPetsClientError, type OpenPetsReaction } from "./protocol.js";
+export { allowedReactions, sessionStatuses, OpenPetsClientError, type OpenPetsReaction, type OpenPetsSessionStatus, type OpenPetsSessionUpdate } from "./protocol.js";
 
 /**
  * Stable per-process session nonce, generated once at module load.
@@ -70,6 +70,7 @@ export interface OpenPetsClient {
   releaseLease(leaseId: string): Promise<{ readonly released: boolean }>;
   react(reaction: OpenPetsReaction, options?: { readonly leaseId?: string }): Promise<unknown>;
   say(message: string, options?: { readonly reaction?: OpenPetsReaction; readonly leaseId?: string }): Promise<unknown>;
+  updateSession(update: OpenPetsSessionUpdate, options?: { readonly leaseId?: string }): Promise<unknown>;
 }
 
 export function createOpenPetsClient(options: OpenPetsClientOptions = {}): OpenPetsClient {
@@ -93,6 +94,7 @@ export function createOpenPetsClient(options: OpenPetsClientOptions = {}): OpenP
     releaseLease: (leaseId) => sendDiscoveredRequest("lease.release", { leaseId }, options),
     react: (reaction, reactOptions) => sendDiscoveredRequest("pet.react", { reaction: validateReaction(reaction), leaseId: reactOptions?.leaseId }, options),
     say: (message, sayOptions) => sendDiscoveredRequest("pet.say", { message, reaction: sayOptions?.reaction, leaseId: sayOptions?.leaseId }, options),
+    updateSession: (update, sessionOptions) => sendDiscoveredRequest("session.update", { name: update.name, status: update.status, message: update.message, question: update.question, leaseId: sessionOptions?.leaseId }, options),
   };
 }
 

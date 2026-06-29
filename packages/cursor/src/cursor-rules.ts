@@ -55,6 +55,7 @@ You may use the OpenPets MCP tools as a brief, safe status channel during meanin
 
 - Use \`openpets_say\` sparingly for major milestones, blocking states, completion, or when review is needed.
 - Prefer \`openpets_react\` over speech for lightweight progress such as thinking, working, testing, success, or error.
+- Use \`openpets_session\` to set this session's name, status (in_progress, waiting, done, error), current activity, or a question awaiting the user — this drives the multi-session board.
 - Keep messages short, user-facing, and safe.
 - Do not send prompts, tool input/output, code, logs, stack traces, credentials, private file contents, URLs, file paths, or other sensitive content through OpenPets.
 - Do not spam every internal step; use OpenPets only for meaningful progress changes and continue normally if a status update is unnecessary.

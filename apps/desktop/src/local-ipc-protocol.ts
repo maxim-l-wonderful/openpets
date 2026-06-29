@@ -20,7 +20,10 @@ export const allowedReactions = [
 ] as const;
 
 export type OpenPetsReaction = typeof allowedReactions[number];
-export type OpenPetsIpcMethod = "hello" | "status" | "pets.list" | "pets.install" | "lease.acquire" | "lease.heartbeat" | "lease.release" | "pet.react" | "pet.say";
+export type OpenPetsIpcMethod = "hello" | "status" | "pets.list" | "pets.install" | "lease.acquire" | "lease.heartbeat" | "lease.release" | "pet.react" | "pet.say" | "session.update";
+
+export const sessionStatuses = ["in_progress", "waiting", "done", "error", "idle"] as const;
+export type OpenPetsSessionStatus = typeof sessionStatuses[number];
 
 export interface OpenPetsIpcRequest {
   readonly id: string;
@@ -55,7 +58,7 @@ export function parseIpcRequest(raw: string, expectedToken: string): OpenPetsIpc
   if (typeof parsed.id !== "string" || parsed.id.length < 1 || parsed.id.length > 120) throw new IpcProtocolError("invalid_request", "IPC request id is invalid.");
   if (parsed.version !== openPetsIpcVersion) throw new IpcProtocolError("invalid_version", "Unsupported IPC protocol version.");
   if (parsed.token !== expectedToken) throw new IpcProtocolError("invalid_token", "Invalid IPC token.");
-  if (parsed.method !== "hello" && parsed.method !== "status" && parsed.method !== "pets.list" && parsed.method !== "pets.install" && parsed.method !== "lease.acquire" && parsed.method !== "lease.heartbeat" && parsed.method !== "lease.release" && parsed.method !== "pet.react" && parsed.method !== "pet.say") {
+  if (parsed.method !== "hello" && parsed.method !== "status" && parsed.method !== "pets.list" && parsed.method !== "pets.install" && parsed.method !== "lease.acquire" && parsed.method !== "lease.heartbeat" && parsed.method !== "lease.release" && parsed.method !== "pet.react" && parsed.method !== "pet.say" && parsed.method !== "session.update") {
     throw new IpcProtocolError("unknown_method", "Unknown IPC method.");
   }
 
@@ -92,6 +95,37 @@ export function validateSayMessage(value: unknown): string {
   if (/https?:\/\/|www\.|\/[\w.-]+\/[\w./-]+|[A-Za-z]:\\/.test(message)) throw new IpcProtocolError("invalid_params", "Message contains a URL or path-like content.");
   if (/(api[_-]?key|secret|token|password|passwd|BEGIN [A-Z ]+PRIVATE KEY)/i.test(message)) throw new IpcProtocolError("invalid_params", "Message looks secret-like.");
   return message;
+}
+
+export function validateSessionStatus(value: unknown): OpenPetsSessionStatus | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !sessionStatuses.includes(value as OpenPetsSessionStatus)) {
+    throw new IpcProtocolError("invalid_params", "Invalid session status.");
+  }
+  return value as OpenPetsSessionStatus;
+}
+
+export function validateSessionName(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new IpcProtocolError("invalid_params", "Session name must be a string.");
+  const name = value.trim();
+  if (name.length < 1) return undefined;
+  if (name.length > 48) throw new IpcProtocolError("invalid_params", "Session name is too long.");
+  if (/[\r\n]/.test(name)) throw new IpcProtocolError("invalid_params", "Session name must be single-line.");
+  return name;
+}
+
+export function validateSessionText(value: unknown, label: string, maxLength: number): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new IpcProtocolError("invalid_params", `${label} must be a string.`);
+  const text = value.trim();
+  if (text.length < 1) return undefined;
+  if (text.length > maxLength) throw new IpcProtocolError("invalid_params", `${label} is too long.`);
+  if (/[\r\n]/.test(text)) throw new IpcProtocolError("invalid_params", `${label} must be single-line.`);
+  if (/```|<script|function\s+\w+|=>|\b(class|import|export|const|let|var)\b/.test(text)) throw new IpcProtocolError("invalid_params", `${label} looks like code.`);
+  if (/https?:\/\/|www\.|\/[\w.-]+\/[\w./-]+|[A-Za-z]:\\/.test(text)) throw new IpcProtocolError("invalid_params", `${label} contains a URL or path-like content.`);
+  if (/(api[_-]?key|secret|token|password|passwd|BEGIN [A-Z ]+PRIVATE KEY)/i.test(text)) throw new IpcProtocolError("invalid_params", `${label} looks secret-like.`);
+  return text;
 }
 
 export function validateOptionalLeaseId(value: unknown): string | undefined {

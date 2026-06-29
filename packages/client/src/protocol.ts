@@ -19,7 +19,22 @@ export const allowedReactions = [
 ] as const;
 
 export type OpenPetsReaction = typeof allowedReactions[number];
-export type OpenPetsIpcMethod = "hello" | "status" | "pets.list" | "pets.install" | "lease.acquire" | "lease.heartbeat" | "lease.release" | "pet.react" | "pet.say";
+export type OpenPetsIpcMethod = "hello" | "status" | "pets.list" | "pets.install" | "lease.acquire" | "lease.heartbeat" | "lease.release" | "pet.react" | "pet.say" | "session.update";
+
+export const sessionStatuses = ["in_progress", "waiting", "done", "error", "idle"] as const;
+export type OpenPetsSessionStatus = typeof sessionStatuses[number];
+
+/** A session-board card update. Every field except the routing leaseId is optional; at least one should be set. */
+export interface OpenPetsSessionUpdate {
+  /** Short session title shown as the card header (e.g. repo or task name). */
+  readonly name?: string;
+  /** Lifecycle state driving the card's status dot/label and the pet's pose. */
+  readonly status?: OpenPetsSessionStatus;
+  /** Current activity line (same safety constraints as a say message). */
+  readonly message?: string;
+  /** A question awaiting the user, surfaced on the card when status is "waiting". */
+  readonly question?: string;
+}
 
 export interface OpenPetsIpcRequest {
   readonly id: string;

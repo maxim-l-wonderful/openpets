@@ -10,6 +10,7 @@ import { transientDisplayMs, type OpenPetsReaction } from "./local-ipc-protocol.
 import { clearTransientReaction, createDefaultPetWindow, getSafeDefaultPetPosition, getTransientDisplayDurationMs, getTransientReactionAnimationMs, isPetWindowDragging, loadDefaultPetContent, mergePetTransientDisplay, readWindowPosition, recoverPetMouseInterop, setPetReactionState, type PetPluginBubbles, type PetStatusBadgeReaction, type PetTransientDisplay } from "./pet-window.js";
 import { PetBubbleArbiter, type ActiveBubble, type PetBubbleSink } from "./plugin-bubble-arbiter.js";
 import { publishPluginPetEvent } from "./plugin-events-source.js";
+import { SessionStore, type SessionCard, type SessionPatch } from "./session-store.js";
 import { reclampAgentPetWindows } from "./agent-pet-controller.js";
 import { reclampPluginPetWindows } from "./plugin-pet-registry.js";
 
@@ -52,6 +53,30 @@ export const defaultPetBubbleArbiter = new PetBubbleArbiter(defaultPetBubbleSink
 export function getDefaultPetPluginBubbles(): PetPluginBubbles | null {
   if (!pluginTransientBubble && !pluginPinnedBubble) return null;
   return { transient: pluginTransientBubble, pinned: pluginPinnedBubble };
+}
+
+// Multi-session board: one card per default-pet coding session (lease). The
+// store drives the stacked board the default pet renders; the IPC layer wires
+// session create/update and lease-lifecycle removal into it.
+const sessionStore = new SessionStore({
+  onChange: () => {
+    if (sessionStore.size() > 0) showDefaultPetForExternalEvent();
+    refreshDefaultPetContent();
+  },
+});
+
+export function upsertDefaultPetSession(leaseId: string, patch: SessionPatch): void {
+  if (paused) return;
+  sessionStore.upsert(leaseId, patch);
+}
+
+export function removeDefaultPetSession(leaseId: string): void {
+  sessionStore.remove(leaseId);
+}
+
+export function getDefaultPetSessionBoard(): readonly SessionCard[] | null {
+  const board = sessionStore.getBoard();
+  return board.length > 0 ? board : null;
 }
 
 export function showDefaultPet(): void {
@@ -116,7 +141,7 @@ export function setDefaultPetPaused(nextPaused: boolean): void {
     return;
   }
 
-  void loadDefaultPetContent(defaultPetWindow, paused, transientDisplay, statusBadge, getCurrentDismissToken(), getDefaultPetPluginBubbles());
+  void loadDefaultPetContent(defaultPetWindow, paused, transientDisplay, statusBadge, getCurrentDismissToken(), getDefaultPetPluginBubbles(), getDefaultPetSessionBoard());
 }
 
 export function getDefaultPetPaused(): boolean {
@@ -133,8 +158,8 @@ export function refreshDefaultPetContent(): void {
     return;
   }
 
-  debug("pet.default", "refresh content", { windowId: defaultPetWindow.id, paused, hasDisplay: Boolean(transientDisplay), badge: statusBadge, petId: getAppStateSnapshot().preferences.defaultPetId });
-  void loadDefaultPetContent(defaultPetWindow, paused, transientDisplay, statusBadge, getCurrentDismissToken(), getDefaultPetPluginBubbles());
+  debug("pet.default", "refresh content", { windowId: defaultPetWindow.id, paused, hasDisplay: Boolean(transientDisplay), badge: statusBadge, sessions: sessionStore.size(), petId: getAppStateSnapshot().preferences.defaultPetId });
+  void loadDefaultPetContent(defaultPetWindow, paused, transientDisplay, statusBadge, getCurrentDismissToken(), getDefaultPetPluginBubbles(), getDefaultPetSessionBoard());
 }
 
 export function recoverDefaultPetMouseInterop(reason: string): void {
@@ -259,7 +284,7 @@ function handleBubbleDismissed(dismissToken: string): void {
   }
   clearDefaultPetDisplayTimers();
   if (defaultPetWindow && !defaultPetWindow.isDestroyed()) {
-    void loadDefaultPetContent(defaultPetWindow, paused, null, null, undefined, getDefaultPetPluginBubbles());
+    void loadDefaultPetContent(defaultPetWindow, paused, null, null, undefined, getDefaultPetPluginBubbles(), getDefaultPetSessionBoard());
   }
 }
 

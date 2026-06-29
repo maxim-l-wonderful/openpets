@@ -70,6 +70,7 @@ for (const unsafe of [
       releaseLease: async () => ({ released: true }),
       react: async (reaction) => { calls.push(`react:${reaction}`); },
       say: async (message, options) => { calls.push(`say:${message}:${options?.reaction ?? "none"}`); },
+      updateSession: async () => ({ ok: true }),
     }),
   });
 
@@ -111,6 +112,7 @@ for (const unsafe of [
       releaseLease: async () => ({ released: true }),
       react: async (reaction) => { calls.push(`react:${reaction}`); },
       say: async (message) => { calls.push(`say:${message}`); },
+      updateSession: async () => ({ ok: true }),
     }),
   });
   assert.equal(typeof runtime.handleEvent, "function");
@@ -137,6 +139,7 @@ for (const unsafe of [
       releaseLease: async () => ({ released: true }),
       react: async () => { throw Object.assign(new Error("/Users/alvin/private token=abc"), { code: "ENOENT /Users/alvin/private" }); },
       say: async () => { throw new Error("should not speak"); },
+      updateSession: async () => ({ ok: true }),
     }),
   });
   runtime.handleEvent({ type: "agent_start", prompt: "PRIVATE_PROMPT" });

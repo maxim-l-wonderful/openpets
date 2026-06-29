@@ -107,7 +107,7 @@ export function getClaudeMemoryPaths(homeDir: string): { readonly claudeDir: str
 }
 
 export function createOpenPetsMemoryBlock(): string {
-  return `${openPetsMemoryStart}\n## OpenPets\n\nOpenPets MCP tools may be available.\n\nUse OpenPets as a short visible status channel for meaningful coding progress:\n- Use \`openpets_say\` when starting, completing, blocking, or needing review on non-trivial work.\n- Keep messages brief, user-facing, and non-sensitive.\n- Do not include code, logs, secrets, URLs, or file paths.\n- Use \`openpets_react\` for small visual or emotional feedback.\n- Use \`openpets_status\` only when checking availability or the targeted pet.\n- Do not spam every internal step.\n${openPetsMemoryEnd}\n`;
+  return `${openPetsMemoryStart}\n## OpenPets\n\nOpenPets MCP tools may be available.\n\nUse OpenPets as a short visible status channel for meaningful coding progress:\n- Use \`openpets_say\` when starting, completing, blocking, or needing review on non-trivial work.\n- Keep messages brief, user-facing, and non-sensitive.\n- Do not include code, logs, secrets, URLs, or file paths.\n- Use \`openpets_react\` for small visual or emotional feedback.\n- Use \`openpets_session\` to set this session's name, status (in_progress, waiting, done, error), current activity, or a question awaiting the user — this drives the multi-session board.\n- Use \`openpets_status\` only when checking availability or the targeted pet.\n- Do not spam every internal step.\n${openPetsMemoryEnd}\n`;
 }
 
 export function ensureImportLine(source: string, importLine: string): string {

@@ -52,6 +52,7 @@ async function checkMcpServerContract(): Promise<void> {
     releaseLease: async () => ({ released: true }),
     react: async (reaction: string, options?: { readonly leaseId?: string }) => ({ ok: true, reaction, leaseId: options?.leaseId }),
     say: async (message: string, options?: { readonly leaseId?: string }) => ({ ok: true, message, leaseId: options?.leaseId }),
+    updateSession: async () => ({ ok: true }),
     hello: async () => ({ ok: true }),
   };
   const server = createOpenPetsMcpServer({ configuredPetId: "snoopy", client: fakeClient, lease: { lease: await fakeClient.acquireLease() }, leaseReady: Promise.resolve() });
@@ -61,7 +62,7 @@ async function checkMcpServerContract(): Promise<void> {
   try {
     const tools = await client.listTools();
     const names = tools.tools.map((tool) => tool.name).sort();
-    if (names.join(",") !== "openpets_react,openpets_say,openpets_status") {
+    if (names.join(",") !== "openpets_react,openpets_say,openpets_session,openpets_status") {
       throw new Error(`Unexpected MCP tool list: ${names.join(",")}`);
     }
 
@@ -81,6 +82,15 @@ async function checkMcpServerContract(): Promise<void> {
 
     const invalidSay = await client.callTool({ name: "openpets_say", arguments: { message: "const secret = 1" } }, CallToolResultSchema);
     if (!invalidSay.isError) throw new Error("Unsafe say message was not rejected.");
+
+    const session = await client.callTool({ name: "openpets_session", arguments: { name: "api refactor", status: "waiting", message: "needs a decision", question: "Use v4?" } }, CallToolResultSchema);
+    if (session.isError) throw new Error("Valid session update unexpectedly failed.");
+
+    const emptySession = await client.callTool({ name: "openpets_session", arguments: {} }, CallToolResultSchema);
+    if (!emptySession.isError) throw new Error("Empty session update was not rejected.");
+
+    const unsafeSession = await client.callTool({ name: "openpets_session", arguments: { message: "export const token = 1" } }, CallToolResultSchema);
+    if (!unsafeSession.isError) throw new Error("Unsafe session message was not rejected.");
 
     const stale = createMcpStatus({ ok: false, appRunning: true, leaseId: "missing", leaseActive: false, staleReason: "unknown_lease" }, "snoopy", undefined, "missing", "missing");
     if (stale.leaseActive !== false || stale.staleReason !== "unknown_lease" || stale.ok !== false) {
@@ -104,7 +114,7 @@ async function checkStdioServerContract(): Promise<void> {
   try {
     const tools = await client.listTools();
     const names = tools.tools.map((tool) => tool.name).sort();
-    if (names.join(",") !== "openpets_react,openpets_say,openpets_status") {
+    if (names.join(",") !== "openpets_react,openpets_say,openpets_session,openpets_status") {
       throw new Error(`Unexpected stdio MCP tool list: ${names.join(",")}`);
     }
 
@@ -145,6 +155,7 @@ async function checkT6TransportOnclose(): Promise<void> {
     releaseLease: async (leaseId: string) => { calls.push(`releaseLease:${leaseId}`); return { released: true }; },
     react: async () => ({ ok: true }),
     say: async () => ({ ok: true }),
+    updateSession: async () => ({ ok: true }),
     hello: async () => ({ ok: true }),
   };
 
@@ -221,6 +232,7 @@ async function checkT7EnsureLeaseHeartbeatFirst(): Promise<void> {
       releaseLease: async () => { calls.push("releaseLease"); return { released: true }; },
       react: async (reaction: string, options?: { readonly leaseId?: string }) => ({ ok: true, reaction, leaseId: options?.leaseId }),
       say: async (message: string, options?: { readonly leaseId?: string }) => ({ ok: true, message, leaseId: options?.leaseId }),
+      updateSession: async () => ({ ok: true }),
       hello: async () => ({ ok: true }),
     };
 
@@ -271,6 +283,7 @@ async function checkT7EnsureLeaseHeartbeatFirst(): Promise<void> {
       releaseLease: async () => { calls.push("releaseLease"); return { released: true }; },
       react: async (reaction: string, options?: { readonly leaseId?: string }) => ({ ok: true, reaction, leaseId: options?.leaseId }),
       say: async (message: string, options?: { readonly leaseId?: string }) => ({ ok: true, message, leaseId: options?.leaseId }),
+      updateSession: async () => ({ ok: true }),
       hello: async () => ({ ok: true }),
     };
 
@@ -323,6 +336,7 @@ async function checkT8ExitOnce(): Promise<void> {
     releaseLease: async (leaseId: string) => { releaseOrder.push("release:" + leaseId); return { released: true }; },
     react: async () => ({ ok: true }),
     say: async () => ({ ok: true }),
+    updateSession: async () => ({ ok: true }),
     hello: async () => ({ ok: true }),
   };
 
