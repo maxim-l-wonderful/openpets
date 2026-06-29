@@ -678,7 +678,7 @@ export async function loadDefaultPetContent(window: BrowserWindow, paused: boole
   const hasBoard = Boolean(sessionBoard && sessionBoard.length > 0);
   debug("pet.window", "default content render begin", { windowId: window.id, sequence, paused, hasDisplay: Boolean(display), reaction: display?.reaction, hasMessage: Boolean(display?.message), badge, hasPluginBubble: Boolean(pluginBubbles?.transient), hasPinned: Boolean(pluginBubbles?.pinned), sessions: sessionBoard?.length ?? 0, defaultPetId: getAppStateSnapshot().preferences.defaultPetId });
   const render = await createDefaultPetRender(paused, display, badge, dismissToken, pluginBubbles, sessionBoard);
-  applyLinuxPetWindowShape(window, getAppStateSnapshot().preferences.petScale as PetScaleValue, Boolean(display?.message || display?.reactionMessage || display?.reaction || badge || paused || pluginBubbles?.transient || pluginBubbles?.pinned || hasBoard));
+  applyLinuxPetWindowShape(window, getAppStateSnapshot().preferences.petScale as PetScaleValue, Boolean(display?.message || display?.reactionMessage || display?.reaction || badge || paused || pluginBubbles?.transient || pluginBubbles?.pinned || hasBoard), hasBoard);
   if (tryUpdateLoadedPetContent(window, render, "default", sequence)) return;
   await loadPetHtmlFile(window, render.html, "default", sequence).then(() => {
     petWindowRenderCache.set(window, render.cacheKey);
@@ -803,7 +803,7 @@ export function readWindowPosition(window: BrowserWindow): Point {
   return clampToVisibleWorkArea({ x, y }, defaultPetWindowSize);
 }
 
-function applyLinuxPetWindowShape(window: BrowserWindow, scale: PetScaleValue, hasBubble: boolean): void {
+function applyLinuxPetWindowShape(window: BrowserWindow, scale: PetScaleValue, hasBubble: boolean, hasBoard = false): void {
   if (process.platform !== "linux" || window.isDestroyed()) return;
 
   const scaledWidth = Math.ceil(defaultPetSprite.frameWidth * scale);
@@ -823,17 +823,20 @@ function applyLinuxPetWindowShape(window: BrowserWindow, scale: PetScaleValue, h
 
   if (hasBubble) {
     const bubbleBottom = Math.ceil(petBottom + scaledHeight + 8);
+    // The board can be far taller than a single bubble; reserve the full space
+    // above the pet so it is not clipped by the input shape on Linux.
+    const regionHeight = hasBoard ? Math.max(64, defaultPetWindowSize.height - bubbleBottom - 8) : 156;
     shape.push({
       x: 0,
-      y: Math.max(0, defaultPetWindowSize.height - bubbleBottom - 156),
+      y: Math.max(0, defaultPetWindowSize.height - bubbleBottom - regionHeight),
       width: defaultPetWindowSize.width,
-      height: Math.min(156, defaultPetWindowSize.height),
+      height: Math.min(regionHeight, defaultPetWindowSize.height),
     });
   }
 
   try {
     window.setShape(shape);
-    debug("pet.window", "linux window shape applied", { windowId: window.id, scale, hasBubble, shape });
+    debug("pet.window", "linux window shape applied", { windowId: window.id, scale, hasBubble, hasBoard, shape });
   } catch (error) {
     logError("pet.window", "linux window shape failed", error instanceof Error ? error : { error });
   }
@@ -1186,7 +1189,7 @@ function createPetWindowCss(paused: boolean, scale: PetScaleValue): string {
     .bubble-hud-item-fill.tone-pink { background: #db2777; }
     .bubble-hud-item-fill.tone-slate { background: #475569; }
     .bubble-hud-item-fill.tone-red { background: #dc2626; }
-    .session-board { position: absolute; left: 50%; bottom: ${bubbleBottom}px; z-index: 4; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; width: 216px; max-width: calc(100vw - 16px); pointer-events: none; animation: bubble-in 200ms cubic-bezier(0.2, 0, 0, 1); }
+    .session-board { position: absolute; left: 50%; bottom: ${bubbleBottom}px; z-index: 4; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; width: 216px; max-width: calc(100vw - 16px); max-height: ${Math.max(64, defaultPetWindowSize.height - bubbleBottom - 8)}px; overflow: hidden; pointer-events: none; animation: bubble-in 200ms cubic-bezier(0.2, 0, 0, 1); }
     .stage.has-pinned .session-board { bottom: ${bubbleBottom + 28}px; }
     .session-card { box-sizing: border-box; width: 100%; padding: 7px 9px 8px; border-radius: 12px; background: linear-gradient(135deg, rgba(239, 246, 255, 0.97), rgba(237, 233, 254, 0.96)); border: 1px solid rgba(255, 255, 255, 0.78); box-shadow: 0 10px 20px rgba(15, 23, 42, 0.14), 0 2px 4px rgba(15, 23, 42, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.82); backdrop-filter: ${bubbleBackdropFilter}; color: #172033; position: relative; overflow: hidden; }
     .session-card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: #94a3b8; }
@@ -1207,8 +1210,8 @@ function createPetWindowCss(paused: boolean, scale: PetScaleValue): string {
     .session-card.is-waiting .session-status { color: #b45309; background: rgba(245, 158, 11, 0.16); }
     .session-card.is-done .session-status { color: #047857; background: rgba(16, 185, 129, 0.16); }
     .session-card.is-error .session-status { color: #b91c1c; background: rgba(239, 68, 68, 0.16); }
-    .session-msg { margin-top: 4px; color: #334155; font: 600 10px/13px Inter, ui-sans-serif, system-ui, sans-serif; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: break-word; }
-    .session-q { margin-top: 5px; padding: 5px 7px; border-radius: 8px; background: rgba(245, 158, 11, 0.14); border: 1px solid rgba(245, 158, 11, 0.28); color: #92400e; font: 700 10px/13px Inter, ui-sans-serif, system-ui, sans-serif; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .session-msg { margin-top: 4px; color: #334155; font: 600 10px/13px Inter, ui-sans-serif, system-ui, sans-serif; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: break-word; }
+    .session-q { margin-top: 5px; padding: 5px 7px; border-radius: 8px; background: rgba(245, 158, 11, 0.14); border: 1px solid rgba(245, 158, 11, 0.28); color: #92400e; font: 700 10px/13px Inter, ui-sans-serif, system-ui, sans-serif; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
     .session-more { text-align: center; color: #64748b; font: 700 9.5px/1 Inter, ui-sans-serif, system-ui, sans-serif; padding: 2px 0 1px; }
     @keyframes bubble-in { from { opacity: 0; transform: translateX(-50%) translateY(4px) scale(0.96); } to { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); } }
     @keyframes status-pulse { 0%, 100% { opacity: 0.52; } 50% { opacity: 1; } }
@@ -1369,8 +1372,16 @@ function createBubbleMarkup(display: PetTransientDisplay | null, paused: boolean
   return `<div class="${className}" role="status" aria-live="polite"${dismissAttr}>${header}${divider}${body}</div>`;
 }
 
-/** Max session cards rendered before collapsing the rest into a "+N more" row. */
-const maxVisibleSessionCards = 4;
+/** Hard upper bound on rendered cards, regardless of available height. */
+const maxVisibleSessionCards = 6;
+// Shared pet/bubble geometry (mirrors createPetWindowCss + applyLinuxPetWindowShape).
+const petBottomPx = 22;
+const petBubbleGapPx = 8;
+// Worst-case rendered height of one card (head + 1-line message + 1-line question)
+// plus the inter-card gap; used to decide how many fit above the pet.
+const sessionCardBudgetPx = 76;
+const sessionCardGapPx = 6;
+const sessionMoreRowPx = 18;
 
 const sessionStatusMeta: Record<OpenPetsSessionStatus, { readonly className: string; readonly label: string }> = {
   in_progress: { className: "is-running", label: "running" },
@@ -1380,9 +1391,26 @@ const sessionStatusMeta: Record<OpenPetsSessionStatus, { readonly className: str
   idle: { className: "is-idle", label: "idle" },
 };
 
+/** Pixels available for the board between the top of the pet's bubble anchor and the window top. */
+function availableBoardHeightPx(): number {
+  const scale = Number(getAppStateSnapshot().preferences.petScale) || 1;
+  const scaledHeight = defaultPetSprite.frameHeight * scale;
+  const bubbleBottom = petBottomPx + scaledHeight + petBubbleGapPx;
+  return Math.max(sessionCardBudgetPx, defaultPetWindowSize.height - bubbleBottom - 8);
+}
+
+/** How many cards fit in `avail` px, reserving room for a "+N more" row when some are hidden. */
+function fitSessionCards(total: number, avail: number): number {
+  const fitAll = Math.max(1, Math.floor((avail + sessionCardGapPx) / (sessionCardBudgetPx + sessionCardGapPx)));
+  if (fitAll >= total) return Math.min(total, maxVisibleSessionCards);
+  const fitWithMore = Math.max(1, Math.floor((avail - sessionMoreRowPx + sessionCardGapPx) / (sessionCardBudgetPx + sessionCardGapPx)));
+  return Math.min(fitWithMore, maxVisibleSessionCards);
+}
+
 /** Stacked multi-session board: one card per active coding session on the default pet. */
 function createSessionBoardMarkup(sessions: readonly SessionCard[]): string {
-  const visible = sessions.slice(0, maxVisibleSessionCards);
+  const visibleCount = fitSessionCards(sessions.length, availableBoardHeightPx());
+  const visible = sessions.slice(0, visibleCount);
   const overflow = sessions.length - visible.length;
   const cards = visible.map(createSessionCardMarkup).join("");
   const more = overflow > 0 ? `<div class="session-more">+${overflow} more</div>` : "";
